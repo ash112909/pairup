@@ -172,49 +172,53 @@ router.post('/like', async (req, res) => {
 // @access  Private
 router.post('/pass', async (req, res) => {
   try {
-    const { targetUserId } = req.body;
+   const { targetUserId } = req.body;
+   if (!targetUserId) {
+     return res.status(400).json({ success:false, message:'Target user ID is required' });
+   }
+
     const userId = req.user._id;
 
-    // Check if match already exists
-    const existingMatch = await Match.findOne({
+    // Look for an existing match
+    let match = await Match.findOne({
       $or: [
         { user1: userId, user2: targetUserId },
         { user1: targetUserId, user2: userId }
       ]
     });
 
-    if (existingMatch) {
-      await existingMatch.updateUserAction(userId, 'pass');
+    if (match) {
+      await match.updateUserAction(userId, 'pass');
     } else {
-      // Create a pass record for future reference
+      // need targetUser for compatibility calc
       const targetUser = await User.findById(targetUserId);
-      if (targetUser) {
-        const compatibilityScore = req.user.calculateCompatibility(targetUser);
-        await Match.createMatch(
-          userId,
-          targetUserId,
-          null,
-          userId,
-          compatibilityScore,
-          { reasonForMatch: 'User passed' }
-        );
-        await existingMatch.updateUserAction(userId, 'pass');
+      if (!targetUser) {
+        return res.status(404).json({ success:false, message:'Target user not found' });
       }
+
+      const compatibilityScore = req.user.calculateCompatibility(targetUser);
+
+      // create & store the new match/pass
+      match = await Match.createMatch(
+        userId,
+        targetUserId,
+        null,             // projectId
+        userId,           // initiatedBy
+        compatibilityScore,
+        { reasonForMatch: 'User passed' }
+      );
+
+      await match.updateUserAction(userId, 'pass');
     }
 
-    res.json({
-      success: true,
-      message: 'Pass recorded successfully'
-    });
+    res.json({ success:true, message:'Pass recorded successfully' });
 
   } catch (error) {
     console.error('Pass user error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Server error while processing pass' 
-    });
+    res.status(500).json({ success:false, message:'Server error while processing pass' });
   }
 });
+
 
 // @route   GET /api/matches/my-matches
 // @desc    Get user's matches

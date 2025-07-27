@@ -1,21 +1,103 @@
-import React, { useState } from 'react';
-import { Heart, X, ArrowLeft, ArrowRight, User, Briefcase, Calendar, Lightbulb, Code, Palette, Camera, Music, BookOpen, TrendingUp, Users, MessageCircle, Star } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Heart, X, ArrowLeft, ArrowRight, User, Briefcase, Calendar, Lightbulb, Code, Palette, Camera, Music, BookOpen, TrendingUp, Users, MessageCircle, Star, Eye, EyeOff } from 'lucide-react';
+
+const API_BASE_URL = '/api';   // <-- just a path, no host/port
+
+// API helper functions
+const api = {
+  async request(endpoint, options = {}) {
+    const token = localStorage.getItem('token');
+    const config = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { Authorization: `Bearer ${token}` }),
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Something went wrong');
+    }
+
+    return data;
+  },
+
+  auth: {
+    register: (userData) => api.request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    }),
+    login: (credentials) => api.request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(credentials),
+    }),
+    getProfile: () => api.request('/auth/me'),
+  },
+
+  users: {
+    updateProfile: (profileData) => api.request('/users/profile', {
+      method: 'PUT',
+      body: JSON.stringify(profileData),
+    }),
+  },
+
+  matches: {
+    discover: (params = {}) => {
+      const query = new URLSearchParams(params).toString();
+      return api.request(`/matches/discover${query ? `?${query}` : ''}`);
+    },
+    like: (targetUserId, projectId = null) => api.request('/matches/like', {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId, projectId }),
+    }),
+    pass: (targetUserId) => api.request('/matches/pass', {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId }),
+    }),
+    getMyMatches: (status = 'mutual') => api.request(`/matches/my-matches?status=${status}`),
+  },
+};
 
 const PairUpApp = () => {
   const [currentStep, setCurrentStep] = useState('welcome');
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [user, setUser] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  
+  // Auth form states
+  const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
+  const [authForm, setAuthForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    userType: ''
+  });
+
+  // Profile states
   const [userProfile, setUserProfile] = useState({
     name: '',
-    userType: '', // 'creator', 'contributor', 'both'
+    userType: '',
     categories: [],
     subcategories: {},
     bio: '',
     experience: '',
     availability: '',
-    location: ''
+    location: '',
+    skills: [],
+    portfolio: []
   });
+
+  // Matching states
+  const [matches, setMatches] = useState([]);
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
 
-  // Sample data for categories and subcategories
+  // Categories data (same as before)
   const categories = {
     'Technology': {
       icon: Code,
@@ -43,88 +125,128 @@ const PairUpApp = () => {
     }
   };
 
-  // Sample potential matches
-  const sampleMatches = [
-    {
-      id: 1,
-      name: 'Sarah Chen',
-      type: 'creator',
-      project: 'AI-Powered Health App',
-      category: 'Technology',
-      subcategory: 'Mobile Apps',
-      bio: 'Building the next generation of healthcare technology. Looking for experienced developers and UI/UX designers.',
-      experience: '5+ years in health tech',
-      location: 'San Francisco, CA',
-      avatar: '👩‍💻'
-    },
-    {
-      id: 2,
-      name: 'Marcus Rodriguez',
-      type: 'contributor',
-      expertise: 'Full-Stack Development',
-      category: 'Technology',
-      subcategory: 'Web Development',
-      bio: 'Passionate full-stack developer with expertise in React, Node.js, and cloud infrastructure. Love working on meaningful projects.',
-      experience: '7+ years in web development',
-      location: 'Austin, TX',
-      avatar: '👨‍💼'
-    },
-    {
-      id: 3,
-      name: 'Elena Vasquez',
-      type: 'creator',
-      project: 'Sustainable Fashion Brand',
-      category: 'Business',
-      subcategory: 'Marketing',
-      bio: 'Launching an eco-friendly fashion startup. Need marketing experts and brand strategists to join the mission.',
-      experience: '3+ years in fashion industry',
-      location: 'Los Angeles, CA',
-      avatar: '🌱'
+  // Check authentication on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      checkAuthStatus();
     }
-  ];
+  }, []);
 
-  const handleStepNavigation = (step) => {
-    setCurrentStep(step);
-  };
-
-  const handleProfileUpdate = (field, value) => {
-    setUserProfile(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleCategoryToggle = (category) => {
-    setUserProfile(prev => ({
-      ...prev,
-      categories: prev.categories.includes(category)
-        ? prev.categories.filter(c => c !== category)
-        : [...prev.categories, category]
-    }));
-  };
-
-  const handleSubcategoryToggle = (category, subcategory) => {
-    setUserProfile(prev => ({
-      ...prev,
-      subcategories: {
-        ...prev.subcategories,
-        [category]: prev.subcategories[category]?.includes(subcategory)
-          ? prev.subcategories[category].filter(s => s !== subcategory)
-          : [...(prev.subcategories[category] || []), subcategory]
+  const checkAuthStatus = async () => {
+    try {
+      const response = await api.auth.getProfile();
+      setUser(response.user);
+      setIsAuthenticated(true);
+      
+      // If user profile is complete, go to matching, otherwise go to profile setup
+      if (response.user.profileCompletion >= 80) {
+        setCurrentStep('matching');
+        loadMatches();
+      } else {
+        setCurrentStep('categories');
+        setUserProfile(prev => ({
+          ...prev,
+          name: response.user.name,
+          userType: response.user.userType,
+          categories: response.user.categories || [],
+          bio: response.user.bio || '',
+          experience: response.user.experience || '',
+          location: response.user.location || '',
+          availability: response.user.availability || ''
+        }));
       }
-    }));
+    } catch (error) {
+      localStorage.removeItem('token');
+      setIsAuthenticated(false);
+    }
   };
 
-  const handleSwipe = (direction) => {
-    if (direction === 'right') {
-      // Handle match logic here
-      console.log('Liked:', sampleMatches[currentCardIndex]);
+  const loadMatches = async () => {
+    try {
+      setLoading(true);
+      const response = await api.matches.discover({ limit: 10 });
+      setMatches(response.matches || []);
+      setCurrentCardIndex(0);
+    } catch (error) {
+      setError('Failed to load matches');
+    } finally {
+      setLoading(false);
     }
-    
-    if (currentCardIndex < sampleMatches.length - 1) {
-      setCurrentCardIndex(prev => prev + 1);
-    } else {
-      setCurrentCardIndex(0); // Loop back to start
+  };
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      let response;
+      if (authMode === 'register') {
+        response = await api.auth.register(authForm);
+      } else {
+        response = await api.auth.login({
+          email: authForm.email,
+          password: authForm.password //await bcrypt.hash(authForm.password, 12)
+        });
+      }
+
+      localStorage.setItem('token', response.token);
+      setUser(response.user);
+      setIsAuthenticated(true);
+
+      if (authMode === 'register') {
+        setUserProfile(prev => ({
+          ...prev,
+          name: response.user.name,
+          userType: response.user.userType
+        }));
+        setCurrentStep('categories');
+      } else {
+        if (response.user.profileCompletion >= 80) {
+          setCurrentStep('matching');
+          loadMatches();
+        } else {
+          setCurrentStep('categories');
+        }
+      }
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateUserProfile = async (profileData) => {
+    try {
+      setLoading(true);
+      const response = await api.users.updateProfile(profileData);
+      setUser(response.user);
+      return response;
+    } catch (error) {
+      setError(error.message);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSwipe = async (direction, match) => {
+    try {
+      if (direction === 'right') {
+        await api.matches.like(match.user._id);
+      } else {
+        await api.matches.pass(match.user._id);
+      }
+      
+      if (currentCardIndex < matches.length - 1) {
+        setCurrentCardIndex(prev => prev + 1);
+      } else {
+        // Load more matches or loop back
+        loadMatches();
+      }
+    } catch (error) {
+      setError('Failed to process swipe');
     }
   };
 
@@ -145,78 +267,150 @@ const PairUpApp = () => {
           Match with creators and contributors for outcome-based initiatives, projects, startups, and events.
         </p>
         
-        <button
-          onClick={() => handleStepNavigation('signup')}
-          className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-4 rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all duration-200"
-        >
-          Get Started
-        </button>
+        <div className="space-y-3">
+          <button
+            onClick={() => setCurrentStep('auth')}
+            className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-4 rounded-xl font-semibold hover:shadow-lg transform hover:scale-105 transition-all duration-200"
+          >
+            Get Started
+          </button>
+          
+          {isAuthenticated && (
+            <button
+              onClick={() => {
+                if (user?.profileCompletion >= 80) {
+                  setCurrentStep('matching');
+                  loadMatches();
+                } else {
+                  setCurrentStep('categories');
+                }
+              }}
+              className="w-full bg-white border-2 border-purple-600 text-purple-600 py-4 rounded-xl font-semibold hover:bg-purple-50 transition-all duration-200"
+            >
+              Continue to App
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 
-  const SignupScreen = () => (
+  const AuthScreen = () => (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-md mx-auto">
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-4">
           <div className="flex items-center mb-6">
-            <button onClick={() => handleStepNavigation('welcome')} className="mr-4">
+            <button onClick={() => setCurrentStep('welcome')} className="mr-4">
               <ArrowLeft className="w-6 h-6 text-gray-600" />
             </button>
-            <h2 className="text-2xl font-bold text-gray-800">Create Profile</h2>
+            <h2 className="text-2xl font-bold text-gray-800">
+              {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+            </h2>
           </div>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-              <input
-                type="text"
-                value={userProfile.name}
-                onChange={(e) => handleProfileUpdate('name', e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Enter your full name"
-              />
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              {error}
             </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
-              <div className="space-y-3">
-                {[
-                  { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors', icon: Lightbulb },
-                  { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects', icon: User },
-                  { value: 'both', label: 'Both', desc: 'I create projects and contribute to others', icon: Users }
-                ].map(({ value, label, desc, icon: Icon }) => (
-                  <button
-                    key={value}
-                    onClick={() => handleProfileUpdate('userType', value)}
-                    className={`w-full p-4 rounded-xl border-2 text-left transition-all ${
-                      userProfile.userType === value
-                        ? 'border-purple-500 bg-purple-50'
-                        : 'border-gray-200 hover:border-purple-300'
-                    }`}
-                  >
-                    <div className="flex items-center">
-                      <Icon className={`w-6 h-6 mr-3 ${userProfile.userType === value ? 'text-purple-600' : 'text-gray-500'}`} />
-                      <div>
-                        <div className={`font-semibold ${userProfile.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
+          )}
+
+          <form onSubmit={handleAuth} className="space-y-4">
+            {authMode === 'register' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={authForm.name}
+                    onChange={(e) => setAuthForm(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="Enter your full name"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
+                  <div className="space-y-2">
+                    {[
+                      { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors' },
+                      { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects' },
+                      { value: 'both', label: 'Both', desc: 'I create projects and contribute to others' }
+                    ].map(({ value, label, desc }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setAuthForm(prev => ({ ...prev, userType: value }))}
+                        className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
+                          authForm.userType === value
+                            ? 'border-purple-500 bg-purple-50'
+                            : 'border-gray-200 hover:border-purple-300'
+                        }`}
+                      >
+                        <div className={`font-semibold ${authForm.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
                           {label}
                         </div>
                         <div className="text-sm text-gray-600">{desc}</div>
-                      </div>
-                    </div>
-                  </button>
-                ))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <input
+                type="email"
+                required
+                value={authForm.email}
+                onChange={(e) => setAuthForm(prev => ({ ...prev, email: e.target.value }))}
+                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                placeholder="Enter your email"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm(prev => ({ ...prev, password: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
+                  placeholder="Enter your password"
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
               </div>
             </div>
-            
-            {userProfile.userType && (
-              <button
-                onClick={() => handleStepNavigation('categories')}
-                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold mt-6"
-              >
-                Continue
-              </button>
-            )}
+
+            <button
+              type="submit"
+              disabled={loading || (authMode === 'register' && !authForm.userType)}
+              className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => {
+                setAuthMode(authMode === 'login' ? 'register' : 'login');
+                setError('');
+              }}
+              className="text-purple-600 hover:text-purple-700 font-medium"
+            >
+              {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+            </button>
           </div>
         </div>
       </div>
@@ -228,7 +422,7 @@ const PairUpApp = () => {
       <div className="max-w-md mx-auto">
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <div className="flex items-center mb-6">
-            <button onClick={() => handleStepNavigation('signup')} className="mr-4">
+            <button onClick={() => setCurrentStep(isAuthenticated ? 'welcome' : 'auth')} className="mr-4">
               <ArrowLeft className="w-6 h-6 text-gray-600" />
             </button>
             <h2 className="text-2xl font-bold text-gray-800">Choose Categories</h2>
@@ -240,7 +434,12 @@ const PairUpApp = () => {
             {Object.entries(categories).map(([category, { icon: Icon }]) => (
               <button
                 key={category}
-                onClick={() => handleCategoryToggle(category)}
+                onClick={() => setUserProfile(prev => ({
+                  ...prev,
+                  categories: prev.categories.includes(category)
+                    ? prev.categories.filter(c => c !== category)
+                    : [...prev.categories, category]
+                }))}
                 className={`p-4 rounded-xl border-2 transition-all ${
                   userProfile.categories.includes(category)
                     ? 'border-purple-500 bg-purple-50'
@@ -261,7 +460,7 @@ const PairUpApp = () => {
           
           {userProfile.categories.length > 0 && (
             <button
-              onClick={() => handleStepNavigation('subcategories')}
+              onClick={() => setCurrentStep('subcategories')}
               className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold"
             >
               Continue
@@ -277,7 +476,7 @@ const PairUpApp = () => {
       <div className="max-w-md mx-auto">
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <div className="flex items-center mb-6">
-            <button onClick={() => handleStepNavigation('categories')} className="mr-4">
+            <button onClick={() => setCurrentStep('categories')} className="mr-4">
               <ArrowLeft className="w-6 h-6 text-gray-600" />
             </button>
             <h2 className="text-2xl font-bold text-gray-800">Specify Interests</h2>
@@ -291,7 +490,15 @@ const PairUpApp = () => {
                   {categories[category].subcategories.map(subcategory => (
                     <button
                       key={subcategory}
-                      onClick={() => handleSubcategoryToggle(category, subcategory)}
+                      onClick={() => setUserProfile(prev => ({
+                        ...prev,
+                        subcategories: {
+                          ...prev.subcategories,
+                          [category]: prev.subcategories[category]?.includes(subcategory)
+                            ? prev.subcategories[category].filter(s => s !== subcategory)
+                            : [...(prev.subcategories[category] || []), subcategory]
+                        }
+                      }))}
                       className={`px-3 py-2 rounded-full text-sm transition-all ${
                         userProfile.subcategories[category]?.includes(subcategory)
                           ? 'bg-purple-500 text-white'
@@ -307,7 +514,7 @@ const PairUpApp = () => {
           </div>
           
           <button
-            onClick={() => handleStepNavigation('profile')}
+            onClick={() => setCurrentStep('profile')}
             className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold mt-6"
           >
             Continue
@@ -317,79 +524,131 @@ const PairUpApp = () => {
     </div>
   );
 
-  const ProfileScreen = () => (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <div className="flex items-center mb-6">
-            <button onClick={() => handleStepNavigation('subcategories')} className="mr-4">
-              <ArrowLeft className="w-6 h-6 text-gray-600" />
-            </button>
-            <h2 className="text-2xl font-bold text-gray-800">Complete Profile</h2>
-          </div>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
-              <textarea
-                value={userProfile.bio}
-                onChange={(e) => handleProfileUpdate('bio', e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent h-24"
-                placeholder="Tell others about yourself and what you're passionate about..."
-              />
+  const ProfileScreen = () => {
+    const handleProfileComplete = async () => {
+      const result = await updateUserProfile(userProfile);
+      if (result) {
+        setCurrentStep('matching');
+        loadMatches();
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
+            <div className="flex items-center mb-6">
+              <button onClick={() => setCurrentStep('subcategories')} className="mr-4">
+                <ArrowLeft className="w-6 h-6 text-gray-600" />
+              </button>
+              <h2 className="text-2xl font-bold text-gray-800">Complete Profile</h2>
             </div>
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+                {error}
+              </div>
+            )}
             
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Experience</label>
-              <input
-                type="text"
-                value={userProfile.experience}
-                onChange={(e) => handleProfileUpdate('experience', e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="e.g., 5+ years in web development"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
-              <input
-                type="text"
-                value={userProfile.location}
-                onChange={(e) => handleProfileUpdate('location', e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="e.g., San Francisco, CA"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Availability</label>
-              <select
-                value={userProfile.availability}
-                onChange={(e) => handleProfileUpdate('availability', e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
+                <textarea
+                  value={userProfile.bio}
+                  onChange={(e) => setUserProfile(prev => ({ ...prev, bio: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent h-24"
+                  placeholder="Tell others about yourself and what you're passionate about..."
+                  maxLength={500}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Experience</label>
+                <input
+                  type="text"
+                  value={userProfile.experience}
+                  onChange={(e) => setUserProfile(prev => ({ ...prev, experience: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="e.g., 5+ years in web development"
+                  maxLength={200}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
+                <input
+                  type="text"
+                  value={userProfile.location}
+                  onChange={(e) => setUserProfile(prev => ({ ...prev, location: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="e.g., San Francisco, CA"
+                  maxLength={100}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Availability</label>
+                <select
+                  value={userProfile.availability}
+                  onChange={(e) => setUserProfile(prev => ({ ...prev, availability: e.target.value }))}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="">Select availability</option>
+                  <option value="full-time">Full-time (40+ hours/week)</option>
+                  <option value="part-time">Part-time (10-20 hours/week)</option>
+                  <option value="freelance">Freelance/Project basis</option>
+                  <option value="weekends">Weekends only</option>
+                </select>
+              </div>
+              
+              <button
+                onClick={handleProfileComplete}
+                disabled={loading}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold mt-6 disabled:opacity-50"
               >
-                <option value="">Select availability</option>
-                <option value="full-time">Full-time (40+ hours/week)</option>
-                <option value="part-time">Part-time (10-20 hours/week)</option>
-                <option value="freelance">Freelance/Project basis</option>
-                <option value="weekends">Weekends only</option>
-              </select>
+                {loading ? 'Saving...' : 'Start Matching'}
+              </button>
             </div>
-            
-            <button
-              onClick={() => handleStepNavigation('matching')}
-              className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold mt-6"
-            >
-              Start Matching
-            </button>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const MatchingScreen = () => {
-    const currentMatch = sampleMatches[currentCardIndex];
+    if (loading) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 flex items-center justify-center">
+          <div className="text-white text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
+            <p>Finding matches...</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (!matches || matches.length === 0) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center">
+            <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">No matches found</h2>
+            <p className="text-gray-600 mb-6">
+              We're working on finding the perfect matches for you. Check back soon!
+            </p>
+            <button
+              onClick={loadMatches}
+              className="bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 px-6 rounded-xl font-semibold"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const currentMatch = matches[currentCardIndex];
+    if (!currentMatch) return null;
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 p-4">
@@ -400,77 +659,96 @@ const PairUpApp = () => {
               <Users className="w-8 h-8 mr-2" />
               <h1 className="text-2xl font-bold">PairUp</h1>
             </div>
-            <MessageCircle className="w-6 h-6" />
+            <button onClick={() => setCurrentStep('matches')}>
+              <MessageCircle className="w-6 h-6" />
+            </button>
           </div>
+
+          {error && (
+            <div className="bg-red-500 text-white p-3 rounded-lg mb-4 text-center">
+              {error}
+            </div>
+          )}
           
           {/* Match Card */}
           <div className="bg-white rounded-3xl shadow-2xl overflow-hidden mb-6 transform hover:scale-105 transition-all duration-300">
             <div className="relative h-64 bg-gradient-to-br from-purple-400 to-blue-400 flex items-center justify-center">
-              <div className="text-6xl">{currentMatch.avatar}</div>
+              <div className="text-6xl">{currentMatch.user.avatar || '👤'}</div>
               <div className="absolute top-4 right-4">
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                  currentMatch.type === 'creator' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                  currentMatch.user.userType === 'creator' ? 'bg-green-100 text-green-800' : 
+                  currentMatch.user.userType === 'contributor' ? 'bg-blue-100 text-blue-800' :
+                  'bg-purple-100 text-purple-800'
                 }`}>
-                  {currentMatch.type === 'creator' ? 'Creator' : 'Contributor'}
+                  {currentMatch.user.userType === 'creator' ? 'Creator' : 
+                   currentMatch.user.userType === 'contributor' ? 'Contributor' : 'Both'}
+                </span>
+              </div>
+              <div className="absolute top-4 left-4">
+                <span className="px-2 py-1 bg-white bg-opacity-90 rounded-full text-sm font-medium text-gray-800">
+                  {Math.round(currentMatch.compatibilityScore)}% match
                 </span>
               </div>
             </div>
             
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-2xl font-bold text-gray-800">{currentMatch.name}</h2>
+                <h2 className="text-2xl font-bold text-gray-800">{currentMatch.user.name}</h2>
                 <div className="flex items-center text-yellow-500">
                   <Star className="w-5 h-5 fill-current" />
-                  <span className="text-sm text-gray-600 ml-1">4.9</span>
+                  <span className="text-sm text-gray-600 ml-1">
+                    {currentMatch.user.rating?.average?.toFixed(1) || '0.0'}
+                  </span>
                 </div>
               </div>
               
-              {currentMatch.project && (
-                <div className="mb-4">
-                  <h3 className="font-semibold text-purple-600 mb-1">Project:</h3>
-                  <p className="text-gray-700">{currentMatch.project}</p>
-                </div>
-              )}
-              
-              {currentMatch.expertise && (
-                <div className="mb-4">
-                  <h3 className="font-semibold text-blue-600 mb-1">Expertise:</h3>
-                  <p className="text-gray-700">{currentMatch.expertise}</p>
-                </div>
-              )}
-              
-              <div className="flex items-center mb-4">
-                <span className="px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700 mr-2">
-                  {currentMatch.category}
-                </span>
-                <span className="px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700">
-                  {currentMatch.subcategory}
-                </span>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {currentMatch.user.categories.map(category => (
+                  <span key={category} className="px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-700">
+                    {category}
+                  </span>
+                ))}
               </div>
               
-              <p className="text-gray-600 mb-4 leading-relaxed">{currentMatch.bio}</p>
+              {currentMatch.matchDetails.reasonForMatch && (
+                <div className="mb-4 p-3 bg-purple-50 rounded-lg">
+                  <p className="text-purple-700 text-sm font-medium">
+                    {currentMatch.matchDetails.reasonForMatch}
+                  </p>
+                </div>
+              )}
+              
+              <p className="text-gray-600 mb-4 leading-relaxed">
+                {currentMatch.user.bio || 'No bio available'}
+              </p>
               
               <div className="flex items-center justify-between text-sm text-gray-500">
                 <div className="flex items-center">
                   <Briefcase className="w-4 h-4 mr-1" />
-                  {currentMatch.experience}
+                  {currentMatch.user.experience || 'Experience not specified'}
                 </div>
-                <div>{currentMatch.location}</div>
+                <div>{currentMatch.user.location || 'Location not specified'}</div>
               </div>
+              
+              {currentMatch.user.completedProjects > 0 && (
+                <div className="mt-3 text-sm text-gray-600">
+                  <span className="font-medium">{currentMatch.user.completedProjects}</span> completed projects
+                </div>
+              )}
             </div>
           </div>
           
           {/* Action Buttons */}
           <div className="flex justify-center space-x-6">
             <button
-              onClick={() => handleSwipe('left')}
+              onClick={() => handleSwipe('left', currentMatch)}
               className="w-16 h-16 bg-white rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-all duration-200"
             >
               <X className="w-8 h-8 text-red-500" />
             </button>
             
             <button
-              onClick={() => handleSwipe('right')}
+              onClick={() => handleSwipe('right', currentMatch)}
               className="w-16 h-16 bg-white rounded-full shadow-lg flex items-center justify-center hover:scale-110 transition-all duration-200"
             >
               <Heart className="w-8 h-8 text-green-500" />
@@ -480,8 +758,89 @@ const PairUpApp = () => {
           {/* Match Counter */}
           <div className="text-center mt-6 text-white">
             <p className="text-sm opacity-75">
-              {currentCardIndex + 1} of {sampleMatches.length}
+              {currentCardIndex + 1} of {matches.length}
             </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const MatchesScreen = () => {
+    const [myMatches, setMyMatches] = useState([]);
+    const [matchesLoading, setMatchesLoading] = useState(true);
+
+    useEffect(() => {
+      loadMyMatches();
+    }, []);
+
+    const loadMyMatches = async () => {
+      try {
+        setMatchesLoading(true);
+        const response = await api.matches.getMyMatches('mutual');
+        setMyMatches(response.matches || []);
+      } catch (error) {
+        setError('Failed to load matches');
+      } finally {
+        setMatchesLoading(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
+            <div className="flex items-center mb-6">
+              <button onClick={() => setCurrentStep('matching')} className="mr-4">
+                <ArrowLeft className="w-6 h-6 text-gray-600" />
+              </button>
+              <h2 className="text-2xl font-bold text-gray-800">My Matches</h2>
+            </div>
+
+            {matchesLoading ? (
+              <div className="text-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+                <p className="text-gray-600">Loading matches...</p>
+              </div>
+            ) : myMatches.length === 0 ? (
+              <div className="text-center py-8">
+                <Heart className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-gray-800 mb-2">No matches yet</h3>
+                <p className="text-gray-600">Keep swiping to find your perfect collaborators!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {myMatches.map((match) => (
+                  <div key={match._id} className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
+                    <div className="flex items-center space-x-4">
+                      <div className="text-3xl">{match.otherUser.avatar || '👤'}</div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <h3 className="font-semibold text-gray-800">{match.otherUser.name}</h3>
+                          <span className="text-sm text-purple-600 font-medium">
+                            {Math.round(match.compatibilityScore)}% match
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          {match.otherUser.userType} • {match.otherUser.categories.join(', ')}
+                        </p>
+                        {match.conversation.started ? (
+                          <div className="mt-2">
+                            <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                              Conversation started
+                            </span>
+                          </div>
+                        ) : (
+                          <button className="mt-2 text-sm text-purple-600 hover:text-purple-700 font-medium">
+                            Start conversation
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -492,8 +851,8 @@ const PairUpApp = () => {
     switch (currentStep) {
       case 'welcome':
         return <WelcomeScreen />;
-      case 'signup':
-        return <SignupScreen />;
+      case 'auth':
+        return <AuthScreen />;
       case 'categories':
         return <CategoriesScreen />;
       case 'subcategories':
@@ -502,13 +861,15 @@ const PairUpApp = () => {
         return <ProfileScreen />;
       case 'matching':
         return <MatchingScreen />;
+      case 'matches':
+        return <MatchesScreen />;
       default:
         return <WelcomeScreen />;
     }
   };
 
   return (
-    <div className="w-full max-w-md mx-auto bg-white">
+    <div className="w-full max-w-md mx-auto bg-white min-h-screen">
       {renderCurrentStep()}
     </div>
   );
