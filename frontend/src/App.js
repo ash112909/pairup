@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Heart, X, ArrowLeft, ArrowRight, User, Briefcase, Calendar, Lightbulb, Code, Palette, Camera, Music, BookOpen, TrendingUp, Users, MessageCircle, Star, Eye, EyeOff } from 'lucide-react';
 
-const API_BASE_URL = '/api';   // <-- just a path, no host/port
+const API_BASE_URL = process.env.REACT_APP_API_URL;
 
 // API helper functions
 const api = {
