@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Heart, X, ArrowLeft, ArrowRight, User, Briefcase, Calendar, Lightbulb, Code, Palette, Camera, Music, BookOpen, TrendingUp, Users, MessageCircle, Star, Eye, EyeOff } from 'lucide-react';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL;
@@ -70,13 +70,13 @@ const PairUpApp = () => {
   const [user, setUser] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   
-  // Auth form states
+  // Auth form states (we’ll only use userType here to avoid parent re-render on typing)
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
   const [authForm, setAuthForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    userType: ''
+    name: '',      // kept for initial defaultValue only
+    email: '',     // kept for initial defaultValue only
+    password: '',  // kept for initial defaultValue only
+    userType: ''   // actively used for register choice
   });
 
   // Profile states
@@ -175,7 +175,7 @@ const PairUpApp = () => {
     }
   };
 
-  const handleAuth = async (e) => {
+  const handleAuth = async (e, refs) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -183,11 +183,21 @@ const PairUpApp = () => {
     try {
       let response;
       if (authMode === 'register') {
-        response = await api.auth.register(authForm);
+        const name = refs.nameRef.current?.value?.trim() || '';
+        const email = refs.emailRef.current?.value?.trim() || '';
+        const password = refs.passwordRef.current?.value || '';
+        response = await api.auth.register({
+          name,
+          email,
+          password,
+          userType: authForm.userType
+        });
       } else {
+        const email = refs.emailRef.current?.value?.trim() || '';
+        const password = refs.passwordRef.current?.value || '';
         response = await api.auth.login({
-          email: authForm.email,
-          password: authForm.password //await bcrypt.hash(authForm.password, 12)
+          email,
+          password
         });
       }
 
@@ -295,127 +305,134 @@ const PairUpApp = () => {
     </div>
   );
 
-  const AuthScreen = () => (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-4">
-          <div className="flex items-center mb-6">
-            <button onClick={() => setCurrentStep('welcome')} className="mr-4">
-              <ArrowLeft className="w-6 h-6 text-gray-600" />
-            </button>
-            <h2 className="text-2xl font-bold text-gray-800">
-              {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
-            </h2>
-          </div>
+  const AuthScreen = () => {
+    // Refs for uncontrolled inputs
+    const nameRef = useRef(null);
+    const emailRef = useRef(null);
+    const passwordRef = useRef(null);
 
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-              {error}
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-4">
+            <div className="flex items-center mb-6">
+              <button onClick={() => setCurrentStep('welcome')} className="mr-4">
+                <ArrowLeft className="w-6 h-6 text-gray-600" />
+              </button>
+              <h2 className="text-2xl font-bold text-gray-800">
+                {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+              </h2>
             </div>
-          )}
 
-          <form onSubmit={handleAuth} className="space-y-4">
-            {authMode === 'register' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={authForm.name}
-                    onChange={(e) => setAuthForm(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    placeholder="Enter your full name"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
-                  <div className="space-y-2">
-                    {[
-                      { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors' },
-                      { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects' },
-                      { value: 'both', label: 'Both', desc: 'I create projects and contribute to others' }
-                    ].map(({ value, label, desc }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setAuthForm(prev => ({ ...prev, userType: value }))}
-                        className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
-                          authForm.userType === value
-                            ? 'border-purple-500 bg-purple-50'
-                            : 'border-gray-200 hover:border-purple-300'
-                        }`}
-                      >
-                        <div className={`font-semibold ${authForm.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
-                          {label}
-                        </div>
-                        <div className="text-sm text-gray-600">{desc}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+                {error}
+              </div>
             )}
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-              <input
-                type="email"
-                required
-                value={authForm.email}
-                onChange={(e) => setAuthForm(prev => ({ ...prev, email: e.target.value }))}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Enter your email"
-              />
-            </div>
+            <form onSubmit={(e) => handleAuth(e, { nameRef, emailRef, passwordRef })} className="space-y-4">
+              {authMode === 'register' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
+                    <input
+                      type="text"
+                      required
+                      defaultValue={authForm.name}
+                      ref={nameRef}
+                      className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      placeholder="Enter your full name"
+                    />
+                  </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors' },
+                        { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects' },
+                        { value: 'both', label: 'Both', desc: 'I create projects and contribute to others' }
+                      ].map(({ value, label, desc }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setAuthForm(prev => ({ ...prev, userType: value }))}
+                          className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
+                            authForm.userType === value
+                              ? 'border-purple-500 bg-purple-50'
+                              : 'border-gray-200 hover:border-purple-300'
+                          }`}
+                        >
+                          <div className={`font-semibold ${authForm.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
+                            {label}
+                          </div>
+                          <div className="text-sm text-gray-600">{desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type="email"
                   required
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm(prev => ({ ...prev, password: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
-                  placeholder="Enter your password"
-                  minLength={6}
+                  defaultValue={authForm.email}
+                  ref={emailRef}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="Enter your email"
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    defaultValue={authForm.password}
+                    ref={passwordRef}
+                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
+                    placeholder="Enter your password"
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || (authMode === 'register' && !authForm.userType)}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => {
+                  setAuthMode(authMode === 'login' ? 'register' : 'login');
+                  setError('');
+                }}
+                className="text-purple-600 hover:text-purple-700 font-medium"
+              >
+                {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+              </button>
             </div>
-
-            <button
-              type="submit"
-              disabled={loading || (authMode === 'register' && !authForm.userType)}
-              className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => {
-                setAuthMode(authMode === 'login' ? 'register' : 'login');
-                setError('');
-              }}
-              className="text-purple-600 hover:text-purple-700 font-medium"
-            >
-              {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-            </button>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const CategoriesScreen = () => (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -525,8 +542,20 @@ const PairUpApp = () => {
   );
 
   const ProfileScreen = () => {
+    // Uncontrolled refs
+    const bioRef = useRef(null);
+    const experienceRef = useRef(null);
+    const locationRef = useRef(null);
+    const availabilityRef = useRef(null);
+
     const handleProfileComplete = async () => {
-      const result = await updateUserProfile(userProfile);
+      const result = await updateUserProfile({
+        ...userProfile,
+        bio: bioRef.current?.value || '',
+        experience: experienceRef.current?.value || '',
+        location: locationRef.current?.value || '',
+        availability: availabilityRef.current?.value || ''
+      });
       if (result) {
         setCurrentStep('matching');
         loadMatches();
@@ -554,8 +583,8 @@ const PairUpApp = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
                 <textarea
-                  value={userProfile.bio}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, bio: e.target.value }))}
+                  defaultValue={userProfile.bio}
+                  ref={bioRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent h-24"
                   placeholder="Tell others about yourself and what you're passionate about..."
                   maxLength={500}
@@ -566,8 +595,8 @@ const PairUpApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Experience</label>
                 <input
                   type="text"
-                  value={userProfile.experience}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, experience: e.target.value }))}
+                  defaultValue={userProfile.experience}
+                  ref={experienceRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="e.g., 5+ years in web development"
                   maxLength={200}
@@ -578,8 +607,8 @@ const PairUpApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
                 <input
                   type="text"
-                  value={userProfile.location}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, location: e.target.value }))}
+                  defaultValue={userProfile.location}
+                  ref={locationRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="e.g., San Francisco, CA"
                   maxLength={100}
@@ -589,8 +618,8 @@ const PairUpApp = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Availability</label>
                 <select
-                  value={userProfile.availability}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, availability: e.target.value }))}
+                  defaultValue={userProfile.availability}
+                  ref={availabilityRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 >
                   <option value="">Select availability</option>

@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from config import Config
 from models import User
 from routes import auth, projects, users
+from routes import matches  # <-- add
 
 # Load environment variables
 load_dotenv()
@@ -57,6 +58,7 @@ connect(**app.config['MONGODB_SETTINGS'])
 app.register_blueprint(auth.auth_bp, url_prefix='/api/auth')
 app.register_blueprint(projects.projects_bp, url_prefix='/api/projects')
 app.register_blueprint(users.users_bp, url_prefix='/api/users')
+app.register_blueprint(matches.matches_bp, url_prefix='/api/matches')  # <-- add
 
 @app.route('/')
 def home():
