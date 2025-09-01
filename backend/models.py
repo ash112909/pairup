@@ -7,6 +7,13 @@ from mongoengine import (
 
 # ----------------- Sub-documents -----------------
 
+# --- TZ helper ---
+def _aware(dt):
+    """Return a timezone-aware (UTC) datetime. If dt is None, return None."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
 class RequiredSkill(EmbeddedDocument):
     skill = StringField()
     level = StringField(choices=('beginner', 'intermediate', 'advanced', 'expert'), default='intermediate')
@@ -134,6 +141,8 @@ class User(Document):
     verification_status = EmbeddedDocumentField(VerificationStatus)
     created_at = DateTimeField(auto_now_add=True, tz_aware=True)  # tz_aware=True
     updated_at = DateTimeField(auto_now=True, tz_aware=True)    # tz_aware=True
+    likes_given = ListField(ReferenceField('User'), default=[])
+    likes_received = ListField(ReferenceField('User'), default=[])
     
     meta = {
         'indexes': [
@@ -233,7 +242,9 @@ class User(Document):
         
         # Activity factor (10% weight)
         # Ensure consistent timezone for comparison
-        days_since_active = (datetime.now(timezone.utc) - other_user.last_active).days
+        now_utc = datetime.now(timezone.utc)
+        last_active_aware = _aware(getattr(other_user, "last_active", None)) or now_utc
+        days_since_active = (now_utc - last_active_aware).days
         activity_score = max(0, 10 - days_since_active) * 1
         score += activity_score
         
@@ -382,11 +393,27 @@ class Match(Document):
     
     # Pre-save hook to update status
     def save(self, *args, **kwargs):
+        # Normalize timestamps to UTC-aware to avoid naive/aware comparisons
+        now_utc = datetime.now(timezone.utc)
+
+        # Normalize action timestamps if present
+        if self.user1_action:
+            self.user1_action.timestamp = _aware(self.user1_action.timestamp) or now_utc
+        if self.user2_action:
+            self.user2_action.timestamp = _aware(self.user2_action.timestamp) or now_utc
+
+        # Normalize core datetimes
+        self.created_at = _aware(getattr(self, "created_at", None)) or now_utc
+        self.updated_at = _aware(getattr(self, "updated_at", None)) or now_utc
+        self.expires_at = _aware(getattr(self, "expires_at", None)) or (now_utc + timedelta(days=7))
+
+        # Auto-set status based on actions / expiry
         if self.user1_action and self.user2_action and \
-           self.user1_action.action == 'like' and self.user2_action.action == 'like':
+        self.user1_action.action == 'like' and self.user2_action.action == 'like':
             self.status = 'mutual'
-        elif self.expires_at <= datetime.now(timezone.utc) and self.status == 'pending': # Ensure comparison is timezone aware
+        elif self.status == 'pending' and self.expires_at <= now_utc:
             self.status = 'expired'
+
         super(Match, self).save(*args, **kwargs)
 
     # Virtual properties

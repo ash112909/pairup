@@ -59,6 +59,7 @@ const api = {
       body: JSON.stringify({ targetUserId }),
     }),
     getMyMatches: (status = 'mutual') => api.request(`/matches/my-matches?status=${status}`),
+    getLikedMe: () => api.request(`/matches/liked-me`),
   },
 };
 
@@ -796,37 +797,122 @@ const PairUpApp = () => {
   };
 
   const MatchesScreen = () => {
-    const [myMatches, setMyMatches] = useState([]);
-    const [matchesLoading, setMatchesLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('matches'); // 'matches' | 'likedMe'
 
-    useEffect(() => {
+  // My Matches state
+  const [myMatches, setMyMatches] = useState([]);
+  const [matchesLoading, setMatchesLoading] = useState(true);
+  const [matchesError, setMatchesError] = useState('');
+
+  // Liked Me state
+  const [likedMe, setLikedMe] = useState([]);
+  const [likedMeLoading, setLikedMeLoading] = useState(true);
+  const [likesError, setLikesError] = useState('');
+
+  useEffect(() => {
+    if (activeTab === 'matches') {
       loadMyMatches();
-    }, []);
+    } else {
+      loadLikedMe();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
-    const loadMyMatches = async () => {
-      try {
-        setMatchesLoading(true);
-        const response = await api.matches.getMyMatches('mutual');
-        setMyMatches(response.matches || []);
-      } catch (error) {
-        setError('Failed to load matches');
-      } finally {
-        setMatchesLoading(false);
-      }
-    };
+  const loadMyMatches = async () => {
+    try {
+      setMatchesLoading(true);
+      setMatchesError('');
+      const res = await api.matches.getMyMatches('mutual');
+      setMyMatches(res.matches || []);
+    } catch (err) {
+      setMatchesError(err.message || 'Failed to load matches');
+    } finally {
+      setMatchesLoading(false);
+    }
+  };
 
-    return (
-      <div className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-md mx-auto">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="flex items-center mb-6">
-              <button onClick={() => setCurrentStep('matching')} className="mr-4">
-                <ArrowLeft className="w-6 h-6 text-gray-600" />
-              </button>
-              <h2 className="text-2xl font-bold text-gray-800">My Matches</h2>
+  const loadLikedMe = async () => {
+    try {
+      setLikedMeLoading(true);
+      setLikesError('');
+      const res = await api.matches.getLikedMe();
+      // support either {likes: [...] } or {matches: [...]}
+      const list = res.likes || res.matches || [];
+      setLikedMe(list);
+    } catch (err) {
+      setLikesError(err.message || 'Failed to load likes');
+    } finally {
+      setLikedMeLoading(false);
+    }
+  };
+
+  const TabButton = ({ id, children }) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      className={`px-4 py-2 rounded-full text-sm font-medium ${
+        activeTab === id
+          ? 'bg-purple-600 text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+    >
+      {children}
+    </button>
+  );
+
+  const Card = ({ person, score, extra }) => (
+    <div className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-center space-x-4">
+        <div className="text-3xl">{person.avatar || '👤'}</div>
+        <div className="flex-1">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-gray-800">{person.name}</h3>
+            {typeof score === 'number' && (
+              <span className="text-sm text-purple-600 font-medium">
+                {Math.round(score)}% match
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-600 mt-1">
+            {(person.userType || person.user_type) ?? '—'} • {(person.categories || []).join(', ')}
+          </p>
+          {extra}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-md mx-auto">
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <div className="flex items-center mb-6">
+            <button onClick={() => setCurrentStep('matching')} className="mr-4">
+              <ArrowLeft className="w-6 h-6 text-gray-600" />
+            </button>
+            <h2 className="text-2xl font-bold text-gray-800">Connections</h2>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex space-x-2 mb-6">
+            <TabButton id="matches">My Matches</TabButton>
+            <TabButton id="likedMe">Liked Me</TabButton>
+          </div>
+
+          {/* Errors */}
+          {activeTab === 'matches' && matchesError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              {matchesError}
             </div>
+          )}
+          {activeTab === 'likedMe' && likesError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              {likesError}
+            </div>
+          )}
 
-            {matchesLoading ? (
+          {/* Content */}
+          {activeTab === 'matches' ? (
+            matchesLoading ? (
               <div className="text-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
                 <p className="text-gray-600">Loading matches...</p>
@@ -839,42 +925,68 @@ const PairUpApp = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {myMatches.map((match) => (
-                  <div key={match._id} className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
-                    <div className="flex items-center space-x-4">
-                      <div className="text-3xl">{match.otherUser.avatar || '👤'}</div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-semibold text-gray-800">{match.otherUser.name}</h3>
-                          <span className="text-sm text-purple-600 font-medium">
-                            {Math.round(match.compatibilityScore)}% match
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {match.otherUser.userType} • {match.otherUser.categories.join(', ')}
-                        </p>
-                        {match.conversation.started ? (
-                          <div className="mt-2">
-                            <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                              Conversation started
-                            </span>
-                          </div>
-                        ) : (
-                          <button className="mt-2 text-sm text-purple-600 hover:text-purple-700 font-medium">
-                            Start conversation
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                {myMatches.map((m) => (
+                  <Card
+                    key={m._id}
+                    person={m.otherUser}
+                    score={m.compatibilityScore}
+                    extra={
+                      m.conversation?.started ? (
+                        <span className="mt-2 inline-block text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                          Conversation started
+                        </span>
+                      ) : (
+                        <button className="mt-2 text-sm text-purple-600 hover:text-purple-700 font-medium">
+                          Start conversation
+                        </button>
+                      )
+                    }
+                  />
                 ))}
               </div>
-            )}
-          </div>
+            )
+          ) : likedMeLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading likes...</p>
+            </div>
+          ) : likedMe.length === 0 ? (
+            <div className="text-center py-8">
+              <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">No likes yet</h3>
+              <p className="text-gray-600">When someone likes you, you’ll see them here.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {likedMe.map((entry) => {
+                // support { user: {...} } or plain user object
+                const person = entry.user || entry.otherUser || entry;
+                return (
+                  <Card
+                    key={person._id || person.id}
+                    person={person}
+                    score={entry.compatibilityScore}
+                    extra={
+                      <div className="mt-2 flex gap-2">
+                        <button className="text-sm bg-green-600 text-white px-3 py-1 rounded-full hover:bg-green-700">
+                          Like back
+                        </button>
+                        <button className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded-full hover:bg-gray-200">
+                          View profile
+                        </button>
+                      </div>
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
-    );
-  };
+    </div>
+  );
+};
+
 
   const renderCurrentStep = () => {
     switch (currentStep) {

@@ -16,9 +16,44 @@ load_dotenv()
 app = Flask(__name__)
 app.config.from_object(Config)
 
-# Configure CORS to allow requests from the CLIENT_URL
-# This ensures that your frontend's origin is explicitly allowed.
-CORS(app, resources={r"/api/*": {"origins": app.config['CLIENT_URL']}})
+# --- CORS (robust for local dev) ---
+client_origins = {
+    os.getenv("CLIENT_URL", "http://localhost:3000"),
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
+
+from flask_cors import CORS
+CORS(
+    app,
+    resources={r"/api/*": {
+        "origins": list(client_origins),
+        "supports_credentials": False,  # keep False since you're using Authorization header, not cookies
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type"],
+        "max_age": 600,  # cache preflight for 10 minutes
+    }},
+)
+
+@app.route("/api/<path:subpath>", methods=["OPTIONS"])
+def api_preflight(subpath):
+    # Let Flask-CORS fill headers; explicit 204 helps some clients
+    return ("", 204)
+
+@app.after_request
+def add_cors_headers(resp):
+    # Always echo ACAO for API routes so even 4xx/5xx show real errors
+    if request.path.startswith("/api/"):
+        origin = request.headers.get("Origin")
+        if origin in client_origins:
+            resp.headers.setdefault("Access-Control-Allow-Origin", origin)
+            resp.headers.setdefault("Vary", "Origin")
+            resp.headers.setdefault("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            resp.headers.setdefault("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            resp.headers.setdefault("Access-Control-Max-Age", "600")
+    return resp
+
 
 # Initialize extensions
 jwt = JWTManager(app)
@@ -32,24 +67,23 @@ def user_lookup_callback(_jwt_header, jwt_data):
 # Global before_request to load user into Flask's `g` object for all authenticated requests
 @app.before_request
 def before_request_auth():
-    g.user = None # Initialize g.user to None
+    g.user = None
     try:
-        # Verify JWT in the request. If optional=True, it won't raise an error if no token is present.
-        # It returns True if a token was present and valid, False otherwise.
-        # It also populates the JWT context for get_jwt_identity().
-        is_jwt_present = verify_jwt_in_request(optional=True)
-        
-        if is_jwt_present:
-            current_user_id = get_jwt_identity()
-            if current_user_id:
-                g.user = User.objects(id=current_user_id).first()
+        # This validates the token if present (and does nothing if missing),
+        # but it does NOT return a boolean.
+        verify_jwt_in_request(optional=True)
+
+        # If a valid JWT was present, identity will be set; otherwise None.
+        current_user_id = get_jwt_identity()
+        if current_user_id:
+            g.user = User.objects(id=current_user_id).first()
     except exceptions.NoAuthorizationError:
-        # This exception should ideally not be hit with optional=True, but as a fallback.
+        # optional=True should prevent this, but keep as guard.
         pass
     except Exception as e:
-        # Catch any other unexpected errors during JWT processing or user lookup
         print(f"Error during JWT processing or user lookup: {e}")
         pass
+
 
 # Connect to MongoDB
 connect(**app.config['MONGODB_SETTINGS'])
