@@ -159,6 +159,22 @@ def like():
     m = _get_or_create_match(g.user, other, project=None)
     _set_action_for_user(m, g.user, "like")
 
+    # reflect like at User level (idempotent mirror)
+    try:
+        if g.user.likes_given is None: g.user.likes_given = []
+        if other.likes_received is None: other.likes_received = []
+
+        if other.id not in [u.id for u in g.user.likes_given]:
+            g.user.likes_given.append(other)
+            g.user.save()
+
+        if g.user.id not in [u.id for u in other.likes_received]:
+            other.likes_received.append(g.user)
+            other.save()
+    except Exception as e:
+        print(f"[matches.like] user like bookkeeping error: {e}")
+
+
     # Is it mutual now?
     my_act = _my_action(m, g.user)
     their_act = _their_action(m, g.user)
@@ -196,6 +212,18 @@ def pass_user():
     m = _get_or_create_match(g.user, other, project=None)
     _set_action_for_user(m, g.user, "pass")
 
+    # optional tidy-up: remove any prior like mirror
+    try:
+        if g.user.likes_given:
+            g.user.likes_given = [u for u in g.user.likes_given if str(u.id) != str(other.id)]
+            g.user.save()
+        if other.likes_received:
+            other.likes_received = [u for u in other.likes_received if str(u.id) != str(g.user.id)]
+            other.save()
+    except Exception as e:
+        print(f"[matches.pass] user pass bookkeeping error: {e}")
+
+
     return jsonify({"success": True, "passed": str(other.id)}), 200
 
 
@@ -212,30 +240,65 @@ def liked_me():
     if not getattr(g, "user", None):
         return jsonify({"success": False, "message": "Authentication required"}), 401
 
-    # All matches where I'm involved and status is not mutual
+    # pagination
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        page = 1
+    try:
+        limit = min(50, max(1, int(request.args.get("limit", 20))))
+    except ValueError:
+        limit = 20
+
+    # Non-mutual matches involving me
     candidate_matches = Match.objects(
         (Q(user1=g.user) | Q(user2=g.user)) & Q(status__ne='mutual')
     ).select_related(1)
 
-    pending_users = []
+    liked_me_rows = []
     for m in candidate_matches:
-        my_act = _my_action(m, g.user)
-        their_act = _their_action(m, g.user)
-        if their_act == 'like' and my_act != 'like':
-            pending_users.append(_other_side(m, g.user))
+        # Which side is which?
+        i_am_user1 = (str(m.user1.id) == str(g.user.id))
+        their_action = m.user2_action if i_am_user1 else m.user1_action
+        my_action    = m.user1_action if i_am_user1 else m.user2_action
+        other        = m.user2 if i_am_user1 else m.user1
 
-    # Deduplicate users
-    seen = set()
-    unique_users = []
-    for u in pending_users:
-        uid = str(u.id)
-        if uid not in seen:
-            seen.add(uid)
-            unique_users.append(u)
+        # They liked me, and I haven't liked them back (yet)
+        if their_action and their_action.action == 'like' and not (my_action and my_action.action == 'like'):
+            liked_me_rows.append({
+                "other": other,
+                "match": m,
+                "theirLikedAt": getattr(their_action, "timestamp", None)
+            })
+
+    # Newest first
+    liked_me_rows.sort(key=lambda r: (r["theirLikedAt"] or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+
+    total = len(liked_me_rows)
+    start = (page - 1) * limit
+    end = start + limit
+    page_rows = liked_me_rows[start:end]
+
+    items = []
+    for r in page_rows:
+        other = r["other"]
+        m = r["match"]
+        items.append({
+            "user": _serialize_user(other),
+            "likedAt": r["theirLikedAt"].isoformat() if r["theirLikedAt"] else None,
+            "isMutual": (m.status == "mutual"),
+            "matchId": f"{str(m.user1.id)}_{str(m.user2.id)}"
+        })
 
     return jsonify({
         "success": True,
-        "users": [_serialize_user(u) for u in unique_users]
+        "users": items,
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit
+        }
     }), 200
 
 

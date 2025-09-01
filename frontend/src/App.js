@@ -261,6 +261,18 @@ const PairUpApp = () => {
     }
   };
 
+  // ---- Logout available to all inner screens ----
+  function handleLogout() {
+    try {
+      localStorage.removeItem('token');
+    } catch {}
+    setIsAuthenticated(false);
+    setUser(null);
+    setMatches([]);
+    setCurrentCardIndex(0);
+    setCurrentStep('welcome');
+  }
+
   const WelcomeScreen = () => (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center transform hover:scale-105 transition-all duration-300">
@@ -301,6 +313,16 @@ const PairUpApp = () => {
               Continue to App
             </button>
           )}
+
+          {isAuthenticated && (
+            <button
+              onClick={handleLogout}
+              className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-200"
+            >
+              Logout
+            </button>
+          )}
+
         </div>
       </div>
     </div>
@@ -689,10 +711,20 @@ const PairUpApp = () => {
               <Users className="w-8 h-8 mr-2" />
               <h1 className="text-2xl font-bold">PairUp</h1>
             </div>
-            <button onClick={() => setCurrentStep('matches')}>
-              <MessageCircle className="w-6 h-6" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setCurrentStep('matches')} title="Connections">
+                <MessageCircle className="w-6 h-6" />
+              </button>
+              <button
+                onClick={handleLogout}
+                title="Log out"
+                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-sm"
+              >
+                Logout
+              </button>
+            </div>
           </div>
+
 
           {error && (
             <div className="bg-red-500 text-white p-3 rounded-lg mb-4 text-center">
@@ -836,8 +868,8 @@ const PairUpApp = () => {
       setLikedMeLoading(true);
       setLikesError('');
       const res = await api.matches.getLikedMe();
-      // support either {likes: [...] } or {matches: [...]}
-      const list = res.likes || res.matches || [];
+    // support either {users: [...] } or fallbacks
+      const list = res.users || res.likes || res.matches || [];
       setLikedMe(list);
     } catch (err) {
       setLikesError(err.message || 'Failed to load likes');
@@ -886,9 +918,17 @@ const PairUpApp = () => {
       <div className="max-w-md mx-auto">
         <div className="bg-white rounded-2xl shadow-lg p-6">
           <div className="flex items-center mb-6">
-            <button onClick={() => setCurrentStep('matching')} className="mr-4">
-              <ArrowLeft className="w-6 h-6 text-gray-600" />
-            </button>
+            <div className="flex items-center gap-2 mr-4">
+              <button onClick={() => setCurrentStep('matching')}>
+                <ArrowLeft className="w-6 h-6 text-gray-600" />
+              </button>
+              <button
+                onClick={handleLogout}
+                className="text-xs text-gray-600 hover:text-gray-800 underline"
+              >
+                Log out
+              </button>
+            </div>
             <h2 className="text-2xl font-bold text-gray-800">Connections</h2>
           </div>
 

@@ -18,9 +18,9 @@ app.config.from_object(Config)
 
 # --- CORS (robust for local dev) ---
 client_origins = {
-    os.getenv("CLIENT_URL", "http://localhost:3000"),
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    os.getenv("CLIENT_URL", "http://localhost:5001"),
+    "http://localhost:5001",
+    "http://127.0.0.1:5001",
 }
 
 from flask_cors import CORS
