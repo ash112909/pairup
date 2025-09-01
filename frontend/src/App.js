@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Heart, X, ArrowLeft, ArrowRight, User, Briefcase, Calendar, Lightbulb, Code, Palette, Camera, Music, BookOpen, TrendingUp, Users, MessageCircle, Star, Eye, EyeOff } from 'lucide-react';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL;
@@ -59,6 +59,7 @@ const api = {
       body: JSON.stringify({ targetUserId }),
     }),
     getMyMatches: (status = 'mutual') => api.request(`/matches/my-matches?status=${status}`),
+    getLikedMe: () => api.request(`/matches/liked-me`),
   },
 };
 
@@ -70,13 +71,13 @@ const PairUpApp = () => {
   const [user, setUser] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
   
-  // Auth form states
+  // Auth form states (we’ll only use userType here to avoid parent re-render on typing)
   const [authMode, setAuthMode] = useState('login'); // 'login' or 'register'
   const [authForm, setAuthForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    userType: ''
+    name: '',      // kept for initial defaultValue only
+    email: '',     // kept for initial defaultValue only
+    password: '',  // kept for initial defaultValue only
+    userType: ''   // actively used for register choice
   });
 
   // Profile states
@@ -175,7 +176,7 @@ const PairUpApp = () => {
     }
   };
 
-  const handleAuth = async (e) => {
+  const handleAuth = async (e, refs) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -183,11 +184,21 @@ const PairUpApp = () => {
     try {
       let response;
       if (authMode === 'register') {
-        response = await api.auth.register(authForm);
+        const name = refs.nameRef.current?.value?.trim() || '';
+        const email = refs.emailRef.current?.value?.trim() || '';
+        const password = refs.passwordRef.current?.value || '';
+        response = await api.auth.register({
+          name,
+          email,
+          password,
+          userType: authForm.userType
+        });
       } else {
+        const email = refs.emailRef.current?.value?.trim() || '';
+        const password = refs.passwordRef.current?.value || '';
         response = await api.auth.login({
-          email: authForm.email,
-          password: authForm.password //await bcrypt.hash(authForm.password, 12)
+          email,
+          password
         });
       }
 
@@ -250,6 +261,18 @@ const PairUpApp = () => {
     }
   };
 
+  // ---- Logout available to all inner screens ----
+  function handleLogout() {
+    try {
+      localStorage.removeItem('token');
+    } catch {}
+    setIsAuthenticated(false);
+    setUser(null);
+    setMatches([]);
+    setCurrentCardIndex(0);
+    setCurrentStep('welcome');
+  }
+
   const WelcomeScreen = () => (
     <div className="min-h-screen bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center transform hover:scale-105 transition-all duration-300">
@@ -290,132 +313,149 @@ const PairUpApp = () => {
               Continue to App
             </button>
           )}
-        </div>
-      </div>
-    </div>
-  );
 
-  const AuthScreen = () => (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-4">
-          <div className="flex items-center mb-6">
-            <button onClick={() => setCurrentStep('welcome')} className="mr-4">
-              <ArrowLeft className="w-6 h-6 text-gray-600" />
+          {isAuthenticated && (
+            <button
+              onClick={handleLogout}
+              className="w-full bg-white border border-gray-300 text-gray-700 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-200"
+            >
+              Logout
             </button>
-            <h2 className="text-2xl font-bold text-gray-800">
-              {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
-            </h2>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-              {error}
-            </div>
           )}
 
-          <form onSubmit={handleAuth} className="space-y-4">
-            {authMode === 'register' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={authForm.name}
-                    onChange={(e) => setAuthForm(prev => ({ ...prev, name: e.target.value }))}
-                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    placeholder="Enter your full name"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
-                  <div className="space-y-2">
-                    {[
-                      { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors' },
-                      { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects' },
-                      { value: 'both', label: 'Both', desc: 'I create projects and contribute to others' }
-                    ].map(({ value, label, desc }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setAuthForm(prev => ({ ...prev, userType: value }))}
-                        className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
-                          authForm.userType === value
-                            ? 'border-purple-500 bg-purple-50'
-                            : 'border-gray-200 hover:border-purple-300'
-                        }`}
-                      >
-                        <div className={`font-semibold ${authForm.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
-                          {label}
-                        </div>
-                        <div className="text-sm text-gray-600">{desc}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-              <input
-                type="email"
-                required
-                value={authForm.email}
-                onChange={(e) => setAuthForm(prev => ({ ...prev, email: e.target.value }))}
-                className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Enter your email"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm(prev => ({ ...prev, password: e.target.value }))}
-                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
-                  placeholder="Enter your password"
-                  minLength={6}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || (authMode === 'register' && !authForm.userType)}
-              className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
-            </button>
-          </form>
-
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => {
-                setAuthMode(authMode === 'login' ? 'register' : 'login');
-                setError('');
-              }}
-              className="text-purple-600 hover:text-purple-700 font-medium"
-            >
-              {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
-            </button>
-          </div>
         </div>
       </div>
     </div>
   );
+
+  const AuthScreen = () => {
+    // Refs for uncontrolled inputs
+    const nameRef = useRef(null);
+    const emailRef = useRef(null);
+    const passwordRef = useRef(null);
+
+    return (
+      <div className="min-h-screen bg-gray-50 p-4">
+        <div className="max-w-md mx-auto">
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-4">
+            <div className="flex items-center mb-6">
+              <button onClick={() => setCurrentStep('welcome')} className="mr-4">
+                <ArrowLeft className="w-6 h-6 text-gray-600" />
+              </button>
+              <h2 className="text-2xl font-bold text-gray-800">
+                {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+              </h2>
+            </div>
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={(e) => handleAuth(e, { nameRef, emailRef, passwordRef })} className="space-y-4">
+              {authMode === 'register' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
+                    <input
+                      type="text"
+                      required
+                      defaultValue={authForm.name}
+                      ref={nameRef}
+                      className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      placeholder="Enter your full name"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-3">I want to be a...</label>
+                    <div className="space-y-2">
+                      {[
+                        { value: 'creator', label: 'Creator', desc: 'I have projects and need contributors' },
+                        { value: 'contributor', label: 'Contributor', desc: 'I want to join and contribute to projects' },
+                        { value: 'both', label: 'Both', desc: 'I create projects and contribute to others' }
+                      ].map(({ value, label, desc }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setAuthForm(prev => ({ ...prev, userType: value }))}
+                          className={`w-full p-3 rounded-xl border-2 text-left transition-all ${
+                            authForm.userType === value
+                              ? 'border-purple-500 bg-purple-50'
+                              : 'border-gray-200 hover:border-purple-300'
+                          }`}
+                        >
+                          <div className={`font-semibold ${authForm.userType === value ? 'text-purple-600' : 'text-gray-800'}`}>
+                            {label}
+                          </div>
+                          <div className="text-sm text-gray-600">{desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+                <input
+                  type="email"
+                  required
+                  defaultValue={authForm.email}
+                  ref={emailRef}
+                  className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  placeholder="Enter your email"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    defaultValue={authForm.password}
+                    ref={passwordRef}
+                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
+                    placeholder="Enter your password"
+                    minLength={6}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  >
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || (authMode === 'register' && !authForm.userType)}
+                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 text-white py-3 rounded-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Processing...' : (authMode === 'login' ? 'Sign In' : 'Create Account')}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => {
+                  setAuthMode(authMode === 'login' ? 'register' : 'login');
+                  setError('');
+                }}
+                className="text-purple-600 hover:text-purple-700 font-medium"
+              >
+                {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const CategoriesScreen = () => (
     <div className="min-h-screen bg-gray-50 p-4">
@@ -525,8 +565,20 @@ const PairUpApp = () => {
   );
 
   const ProfileScreen = () => {
+    // Uncontrolled refs
+    const bioRef = useRef(null);
+    const experienceRef = useRef(null);
+    const locationRef = useRef(null);
+    const availabilityRef = useRef(null);
+
     const handleProfileComplete = async () => {
-      const result = await updateUserProfile(userProfile);
+      const result = await updateUserProfile({
+        ...userProfile,
+        bio: bioRef.current?.value || '',
+        experience: experienceRef.current?.value || '',
+        location: locationRef.current?.value || '',
+        availability: availabilityRef.current?.value || ''
+      });
       if (result) {
         setCurrentStep('matching');
         loadMatches();
@@ -554,8 +606,8 @@ const PairUpApp = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Bio</label>
                 <textarea
-                  value={userProfile.bio}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, bio: e.target.value }))}
+                  defaultValue={userProfile.bio}
+                  ref={bioRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent h-24"
                   placeholder="Tell others about yourself and what you're passionate about..."
                   maxLength={500}
@@ -566,8 +618,8 @@ const PairUpApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Experience</label>
                 <input
                   type="text"
-                  value={userProfile.experience}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, experience: e.target.value }))}
+                  defaultValue={userProfile.experience}
+                  ref={experienceRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="e.g., 5+ years in web development"
                   maxLength={200}
@@ -578,8 +630,8 @@ const PairUpApp = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Location</label>
                 <input
                   type="text"
-                  value={userProfile.location}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, location: e.target.value }))}
+                  defaultValue={userProfile.location}
+                  ref={locationRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="e.g., San Francisco, CA"
                   maxLength={100}
@@ -589,8 +641,8 @@ const PairUpApp = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Availability</label>
                 <select
-                  value={userProfile.availability}
-                  onChange={(e) => setUserProfile(prev => ({ ...prev, availability: e.target.value }))}
+                  defaultValue={userProfile.availability}
+                  ref={availabilityRef}
                   className="w-full p-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 >
                   <option value="">Select availability</option>
@@ -659,10 +711,20 @@ const PairUpApp = () => {
               <Users className="w-8 h-8 mr-2" />
               <h1 className="text-2xl font-bold">PairUp</h1>
             </div>
-            <button onClick={() => setCurrentStep('matches')}>
-              <MessageCircle className="w-6 h-6" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setCurrentStep('matches')} title="Connections">
+                <MessageCircle className="w-6 h-6" />
+              </button>
+              <button
+                onClick={handleLogout}
+                title="Log out"
+                className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-sm"
+              >
+                Logout
+              </button>
+            </div>
           </div>
+
 
           {error && (
             <div className="bg-red-500 text-white p-3 rounded-lg mb-4 text-center">
@@ -767,37 +829,130 @@ const PairUpApp = () => {
   };
 
   const MatchesScreen = () => {
-    const [myMatches, setMyMatches] = useState([]);
-    const [matchesLoading, setMatchesLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('matches'); // 'matches' | 'likedMe'
 
-    useEffect(() => {
+  // My Matches state
+  const [myMatches, setMyMatches] = useState([]);
+  const [matchesLoading, setMatchesLoading] = useState(true);
+  const [matchesError, setMatchesError] = useState('');
+
+  // Liked Me state
+  const [likedMe, setLikedMe] = useState([]);
+  const [likedMeLoading, setLikedMeLoading] = useState(true);
+  const [likesError, setLikesError] = useState('');
+
+  useEffect(() => {
+    if (activeTab === 'matches') {
       loadMyMatches();
-    }, []);
+    } else {
+      loadLikedMe();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
-    const loadMyMatches = async () => {
-      try {
-        setMatchesLoading(true);
-        const response = await api.matches.getMyMatches('mutual');
-        setMyMatches(response.matches || []);
-      } catch (error) {
-        setError('Failed to load matches');
-      } finally {
-        setMatchesLoading(false);
-      }
-    };
+  const loadMyMatches = async () => {
+    try {
+      setMatchesLoading(true);
+      setMatchesError('');
+      const res = await api.matches.getMyMatches('mutual');
+      setMyMatches(res.matches || []);
+    } catch (err) {
+      setMatchesError(err.message || 'Failed to load matches');
+    } finally {
+      setMatchesLoading(false);
+    }
+  };
 
-    return (
-      <div className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-md mx-auto">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="flex items-center mb-6">
-              <button onClick={() => setCurrentStep('matching')} className="mr-4">
+  const loadLikedMe = async () => {
+    try {
+      setLikedMeLoading(true);
+      setLikesError('');
+      const res = await api.matches.getLikedMe();
+    // support either {users: [...] } or fallbacks
+      const list = res.users || res.likes || res.matches || [];
+      setLikedMe(list);
+    } catch (err) {
+      setLikesError(err.message || 'Failed to load likes');
+    } finally {
+      setLikedMeLoading(false);
+    }
+  };
+
+  const TabButton = ({ id, children }) => (
+    <button
+      onClick={() => setActiveTab(id)}
+      className={`px-4 py-2 rounded-full text-sm font-medium ${
+        activeTab === id
+          ? 'bg-purple-600 text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+    >
+      {children}
+    </button>
+  );
+
+  const Card = ({ person, score, extra }) => (
+    <div className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-center space-x-4">
+        <div className="text-3xl">{person.avatar || '👤'}</div>
+        <div className="flex-1">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-gray-800">{person.name}</h3>
+            {typeof score === 'number' && (
+              <span className="text-sm text-purple-600 font-medium">
+                {Math.round(score)}% match
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-600 mt-1">
+            {(person.userType || person.user_type) ?? '—'} • {(person.categories || []).join(', ')}
+          </p>
+          {extra}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-md mx-auto">
+        <div className="bg-white rounded-2xl shadow-lg p-6">
+          <div className="flex items-center mb-6">
+            <div className="flex items-center gap-2 mr-4">
+              <button onClick={() => setCurrentStep('matching')}>
                 <ArrowLeft className="w-6 h-6 text-gray-600" />
               </button>
-              <h2 className="text-2xl font-bold text-gray-800">My Matches</h2>
+              <button
+                onClick={handleLogout}
+                className="text-xs text-gray-600 hover:text-gray-800 underline"
+              >
+                Log out
+              </button>
             </div>
+            <h2 className="text-2xl font-bold text-gray-800">Connections</h2>
+          </div>
 
-            {matchesLoading ? (
+          {/* Tabs */}
+          <div className="flex space-x-2 mb-6">
+            <TabButton id="matches">My Matches</TabButton>
+            <TabButton id="likedMe">Liked Me</TabButton>
+          </div>
+
+          {/* Errors */}
+          {activeTab === 'matches' && matchesError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              {matchesError}
+            </div>
+          )}
+          {activeTab === 'likedMe' && likesError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
+              {likesError}
+            </div>
+          )}
+
+          {/* Content */}
+          {activeTab === 'matches' ? (
+            matchesLoading ? (
               <div className="text-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
                 <p className="text-gray-600">Loading matches...</p>
@@ -810,42 +965,68 @@ const PairUpApp = () => {
               </div>
             ) : (
               <div className="space-y-4">
-                {myMatches.map((match) => (
-                  <div key={match._id} className="border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow">
-                    <div className="flex items-center space-x-4">
-                      <div className="text-3xl">{match.otherUser.avatar || '👤'}</div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <h3 className="font-semibold text-gray-800">{match.otherUser.name}</h3>
-                          <span className="text-sm text-purple-600 font-medium">
-                            {Math.round(match.compatibilityScore)}% match
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {match.otherUser.userType} • {match.otherUser.categories.join(', ')}
-                        </p>
-                        {match.conversation.started ? (
-                          <div className="mt-2">
-                            <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                              Conversation started
-                            </span>
-                          </div>
-                        ) : (
-                          <button className="mt-2 text-sm text-purple-600 hover:text-purple-700 font-medium">
-                            Start conversation
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                {myMatches.map((m) => (
+                  <Card
+                    key={m._id}
+                    person={m.otherUser}
+                    score={m.compatibilityScore}
+                    extra={
+                      m.conversation?.started ? (
+                        <span className="mt-2 inline-block text-xs text-green-600 bg-green-50 px-2 py-1 rounded-full">
+                          Conversation started
+                        </span>
+                      ) : (
+                        <button className="mt-2 text-sm text-purple-600 hover:text-purple-700 font-medium">
+                          Start conversation
+                        </button>
+                      )
+                    }
+                  />
                 ))}
               </div>
-            )}
-          </div>
+            )
+          ) : likedMeLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Loading likes...</p>
+            </div>
+          ) : likedMe.length === 0 ? (
+            <div className="text-center py-8">
+              <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">No likes yet</h3>
+              <p className="text-gray-600">When someone likes you, you’ll see them here.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {likedMe.map((entry) => {
+                // support { user: {...} } or plain user object
+                const person = entry.user || entry.otherUser || entry;
+                return (
+                  <Card
+                    key={person._id || person.id}
+                    person={person}
+                    score={entry.compatibilityScore}
+                    extra={
+                      <div className="mt-2 flex gap-2">
+                        <button className="text-sm bg-green-600 text-white px-3 py-1 rounded-full hover:bg-green-700">
+                          Like back
+                        </button>
+                        <button className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded-full hover:bg-gray-200">
+                          View profile
+                        </button>
+                      </div>
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
-    );
-  };
+    </div>
+  );
+};
+
 
   const renderCurrentStep = () => {
     switch (currentStep) {
