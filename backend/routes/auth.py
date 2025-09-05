@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, g
 from flask_jwt_extended import create_access_token, jwt_required
 from models import User
 from bson import ObjectId # Import ObjectId
+from flask_jwt_extended import create_access_token
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -33,6 +34,7 @@ def register():
         # So we pass 'user_type=user_type' which uses the 'user_type' variable from data.get('userType').
         user = User(email=email, password=password, user_type=user_type, name=data.get('name')) # Pass name too
         user.save()
+        access_token = create_access_token(identity=str(user.id))
         
         # Omit password from the response and convert ObjectIds
         user_data = user.to_mongo().to_dict()
@@ -42,6 +44,7 @@ def register():
         return jsonify({
             "success": True,
             "message": "User registered successfully",
+            "token": access_token,
             "user": user_data,
             "profileCompletion": user.profile_completion # Include profileCompletion
         }), 201

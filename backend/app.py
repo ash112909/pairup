@@ -21,6 +21,8 @@ client_origins = {
     os.getenv("CLIENT_URL", "http://localhost:5001"),
     "http://localhost:5001",
     "http://127.0.0.1:5001",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 }
 
 from flask_cors import CORS
@@ -68,21 +70,17 @@ def user_lookup_callback(_jwt_header, jwt_data):
 @app.before_request
 def before_request_auth():
     g.user = None
+    auth_hdr = request.headers.get("Authorization")
+    if not auth_hdr:
+       return  # no token is fine for public/OPTIONS routes
     try:
-        # This validates the token if present (and does nothing if missing),
-        # but it does NOT return a boolean.
-        verify_jwt_in_request(optional=True)
-
-        # If a valid JWT was present, identity will be set; otherwise None.
-        current_user_id = get_jwt_identity()
-        if current_user_id:
-            g.user = User.objects(id=current_user_id).first()
-    except exceptions.NoAuthorizationError:
-        # optional=True should prevent this, but keep as guard.
-        pass
+       verify_jwt_in_request()  # require a valid token if header is present
+       uid = get_jwt_identity()
+       if uid:
+           g.user = User.objects(id=uid).first()
     except Exception as e:
-        print(f"Error during JWT processing or user lookup: {e}")
-        pass
+       # keep this quiet unless you’re actively debugging
+       print(f"[auth] JWT error: {e}")
 
 
 # Connect to MongoDB

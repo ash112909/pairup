@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, g
 from flask_jwt_extended import jwt_required
 from mongoengine import Q
+from mongoengine.errors import NotUniqueError
 
 from models import User, Match, MatchAction
 
@@ -37,30 +38,37 @@ def _pair_key(a: User, b: User):
     return (a, b) if str(a.id) < str(b.id) else (b, a)
 
 def _get_or_create_match(me: User, other: User, project=None) -> Match:
-    """Fetch existing match for the pair (any order), or create a new pending one."""
-    m = Match.objects(
-        (Q(user1=me) & Q(user2=other)) | (Q(user1=other) & Q(user2=me))
-    ).first()
-    if m:
-        return m
-
+    """Atomically fetch or create the Match for (me, other)."""
     u1, u2 = _pair_key(me, other)
     try:
         comp = me.calculate_compatibility(other)
     except Exception:
         comp = 87.0
 
-    return Match.objects.create(
-        user1=u1,
-        user2=u2,
-        project=project,
-        match_type='user-to-user' if project is None else 'user-to-project',
-        initiated_by=me,
-        compatibility_score=comp,
-        match_details=None,
-        user1_action=MatchAction(action='pending', timestamp=datetime.now(timezone.utc)),
-        user2_action=MatchAction(action='pending', timestamp=datetime.now(timezone.utc)),
-    )
+    # 1) fast path: already exists
+    m = Match.objects(Q(user1=u1) & Q(user2=u2)).first()
+    if m:
+        return m
+
+    # 2) atomic upsert; if a unique race happens, refetch
+    try:
+        m = Match.objects(user1=u1, user2=u2).modify(
+            upsert=True,
+            new=True,
+            set_on_insert__project=project,
+            set_on_insert__match_type=('user-to-user' if project is None else 'user-to-project'),
+            set_on_insert__initiated_by=me,
+            set_on_insert__compatibility_score=comp,
+            set_on_insert__match_details=None,
+            set_on_insert__user1_action=MatchAction(action='pending', timestamp=datetime.now(timezone.utc)),
+            set_on_insert__user2_action=MatchAction(action='pending', timestamp=datetime.now(timezone.utc)),
+        )
+    except NotUniqueError:
+        m = Match.objects(Q(user1=u1) & Q(user2=u2)).first()
+
+    # 3) final guard
+    return m
+
 
 def _set_action_for_user(m: Match, user: User, action: str):
     """Set 'like' or 'pass' for a specific user on a Match (idempotent)."""
@@ -135,6 +143,7 @@ def discover():
 # -----------------------------
 
 @matches_bp.route("/like", methods=["POST", "OPTIONS"])
+@jwt_required()
 def like():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -157,6 +166,8 @@ def like():
 
     # Get/create the match and set my action
     m = _get_or_create_match(g.user, other, project=None)
+    if not m:
+        return jsonify({"success": False, "message": "Could not create or fetch match"}), 500
     _set_action_for_user(m, g.user, "like")
 
     # reflect like at User level (idempotent mirror)
@@ -189,6 +200,7 @@ def like():
 
 
 @matches_bp.route("/pass", methods=["POST", "OPTIONS"])
+@jwt_required()
 def pass_user():
     if request.method == "OPTIONS":
         return ("", 204)
@@ -210,6 +222,8 @@ def pass_user():
 
     # Get/create the match and set my action
     m = _get_or_create_match(g.user, other, project=None)
+    if not m:
+        return jsonify({"success": False, "message": "Could not create or fetch match"}), 500
     _set_action_for_user(m, g.user, "pass")
 
     # optional tidy-up: remove any prior like mirror
